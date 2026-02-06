@@ -189,7 +189,7 @@ echo ""
 echo -e "${BOLD}[*] Generating HTML report...${NC}"
 PROJECT_NAME=$(basename "$PROJECT_DIR")
 if command -v node &>/dev/null; then
-    node "$SCRIPT_DIR/lib/html-report.js" "$REPORT_DIR" "$PROJECT_NAME" 2>/dev/null && \
+    node "$SCRIPT_DIR/lib/html-report.js" "$REPORT_DIR" "$PROJECT_NAME" "$PROJECT_DIR" 2>/dev/null && \
         echo -e "  ${GREEN}[+] HTML dashboard: ${REPORT_DIR}/security-report.html${NC}" || \
         echo -e "  ${YELLOW}[!] HTML report generation failed${NC}"
 else
