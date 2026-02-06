@@ -22,7 +22,7 @@ USAGE
   webapp-ss <command> [options]
 
 COMMANDS
-  init              Create webapp-ss.config.js in your project
+  init              Create webapp-ss.config.cjs in your project
   scan              Run security scans (default command)
   hooks             Install git hooks from config
   hooks --remove    Remove webapp-ss git hooks
@@ -101,7 +101,7 @@ function cmdInit(projectDir) {
   }
 
   console.log("");
-  console.log("Edit webapp-ss.config.js to customize, then run:");
+  console.log(`Edit ${CONFIG_FILENAME} to customize, then run:`);
   console.log("  npx webapp-ss scan");
   console.log("");
 }

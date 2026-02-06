@@ -170,9 +170,11 @@ fi
 # ============================================================
 echo ""
 if command -v node &>/dev/null; then
-    # Find config file if it exists
+    # Find config file if it exists (.cjs preferred, .js fallback)
     CONFIG_FILE=""
-    if [[ -f "$PROJECT_DIR/webapp-ss.config.js" ]]; then
+    if [[ -f "$PROJECT_DIR/webapp-ss.config.cjs" ]]; then
+        CONFIG_FILE="$PROJECT_DIR/webapp-ss.config.cjs"
+    elif [[ -f "$PROJECT_DIR/webapp-ss.config.js" ]]; then
         CONFIG_FILE="$PROJECT_DIR/webapp-ss.config.js"
     fi
 
