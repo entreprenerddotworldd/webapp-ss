@@ -166,11 +166,26 @@ if [[ "$SCAN_MODE" == "full" || "$SCAN_MODE" == "prod-check" ]]; then
 fi
 
 # ============================================================
+# HTML REPORT
+# ============================================================
+echo ""
+echo -e "${BOLD}[*] Generating HTML report...${NC}"
+PROJECT_NAME=$(basename "$PROJECT_DIR")
+if command -v node &>/dev/null; then
+    node "$SCRIPT_DIR/lib/html-report.js" "$REPORT_DIR" "$PROJECT_NAME" 2>/dev/null && \
+        echo -e "  ${GREEN}[+] HTML dashboard: ${REPORT_DIR}/security-report.html${NC}" || \
+        echo -e "  ${YELLOW}[!] HTML report generation failed${NC}"
+else
+    echo -e "  ${YELLOW}[!] Node.js not found - skipping HTML report${NC}"
+fi
+
+# ============================================================
 # SUMMARY
 # ============================================================
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
+echo ""
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${BOLD}  SCAN COMPLETE${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -185,6 +200,12 @@ for f in "$REPORT_DIR"/*; do
     [[ -f "$f" ]] && echo "    - $(basename "$f")"
 done
 echo ""
+
+# Auto-open HTML report in browser if configured
+if [[ "${WEBAPP_SS_OPEN_BROWSER:-0}" == "1" ]] && [[ -f "$REPORT_DIR/security-report.html" ]]; then
+    xdg-open "$REPORT_DIR/security-report.html" 2>/dev/null || \
+    open "$REPORT_DIR/security-report.html" 2>/dev/null || true
+fi
 
 if [[ $OVERALL_EXIT -ne 0 ]]; then
     echo -e "  ${RED}${BOLD}Security issues were found. Review reports above before pushing to production.${NC}"
