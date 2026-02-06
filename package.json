@@ -1,0 +1,37 @@
+{
+  "name": "webapp-ss",
+  "version": "1.0.0",
+  "description": "Modular web application security scanner - SAST, SCA, DAST, secrets, headers, and production readiness",
+  "bin": {
+    "webapp-ss": "./bin/cli.js"
+  },
+  "scripts": {
+    "postinstall": "node ./lib/postinstall.js"
+  },
+  "keywords": [
+    "security",
+    "scanner",
+    "sast",
+    "dast",
+    "sca",
+    "owasp",
+    "semgrep",
+    "zap",
+    "trivy",
+    "nuclei",
+    "gitleaks",
+    "vulnerability"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "scripts/",
+    "configs/",
+    "workflows/",
+    "audit.sh"
+  ]
+}

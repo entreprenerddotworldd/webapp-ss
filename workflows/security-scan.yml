@@ -1,0 +1,266 @@
+name: webapp-ss Security Scan
+
+on:
+  push:
+    branches: ["*"]
+  pull_request:
+    branches: [main, master, develop]
+
+# Cancel in-flight runs on the same branch
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  # ────────────────────────────────────────────
+  # SAST - Static code analysis
+  # ────────────────────────────────────────────
+  sast:
+    name: "SAST (Semgrep)"
+    runs-on: ubuntu-latest
+    container:
+      image: returntocorp/semgrep:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        run: |
+          semgrep scan \
+            --config=auto \
+            --config=p/owasp-top-ten \
+            --config=p/security-audit \
+            --json \
+            --output=semgrep-results.json \
+            . || true
+
+      - name: Semgrep Summary
+        if: always()
+        run: |
+          python3 -c "
+          import json, sys
+          with open('semgrep-results.json') as f:
+              data = json.load(f)
+          results = data.get('results', [])
+          errors = [r for r in results if r.get('extra',{}).get('severity') == 'ERROR']
+          warnings = [r for r in results if r.get('extra',{}).get('severity') == 'WARNING']
+          print(f'Semgrep: {len(errors)} errors, {len(warnings)} warnings, {len(results)} total')
+          for r in errors[:10]:
+              path = r.get('path','?')
+              line = r.get('start',{}).get('line','?')
+              msg = r.get('extra',{}).get('message','')[:100]
+              print(f'  ERROR: {path}:{line} - {msg}')
+          if errors:
+              sys.exit(1)
+          " || echo "::warning::Semgrep found issues - check artifacts"
+
+      - name: Upload Semgrep Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-results
+          path: semgrep-results.json
+          retention-days: 30
+
+  # ────────────────────────────────────────────
+  # Secrets - Credential leak detection
+  # ────────────────────────────────────────────
+  secrets:
+    name: "Secret Detection (Gitleaks)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+  # ────────────────────────────────────────────
+  # SCA - Dependency vulnerability scanning
+  # ────────────────────────────────────────────
+  sca:
+    name: "SCA (Trivy)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          format: json
+          output: trivy-results.json
+        continue-on-error: true
+
+      - name: Trivy Summary
+        if: always()
+        run: |
+          python3 -c "
+          import json
+          with open('trivy-results.json') as f:
+              data = json.load(f)
+          total = 0
+          critical = 0
+          for r in data.get('Results', []):
+              for v in r.get('Vulnerabilities', []):
+                  total += 1
+                  if v.get('Severity') == 'CRITICAL':
+                      critical += 1
+          print(f'Trivy: {critical} critical, {total} total HIGH+ vulnerabilities')
+          if critical > 0:
+              for r in data.get('Results', []):
+                  for v in r.get('Vulnerabilities', []):
+                      if v.get('Severity') == 'CRITICAL':
+                          print(f\"  CRITICAL: {v.get('PkgName')}@{v.get('InstalledVersion')} -> {v.get('FixedVersion','no fix')} ({v.get('VulnerabilityID')})\")
+          " 2>/dev/null || echo "::warning::Could not parse Trivy results"
+
+      - name: Upload Trivy Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-results
+          path: trivy-results.json
+          retention-days: 30
+
+  # ────────────────────────────────────────────
+  # DAST - Live application scanning
+  # Builds and starts the app, then scans it
+  # ────────────────────────────────────────────
+  dast:
+    name: "DAST (ZAP)"
+    runs-on: ubuntu-latest
+    # Only on push to main branches or PRs
+    if: github.event_name == 'pull_request' || contains(fromJSON('["refs/heads/main","refs/heads/master","refs/heads/develop"]'), github.ref)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect project type and start app
+        id: start-app
+        run: |
+          APP_PORT=3000
+
+          # Node.js project
+          if [[ -f "package.json" ]]; then
+            echo "Detected Node.js project"
+            if command -v node &>/dev/null; then
+              NODE_VERSION=$(node --version)
+              echo "Node: $NODE_VERSION"
+            fi
+
+            # Try to determine the right Node version
+            if [[ -f ".nvmrc" ]]; then
+              NODE_VER=$(cat .nvmrc)
+            elif [[ -f ".node-version" ]]; then
+              NODE_VER=$(cat .node-version)
+            else
+              NODE_VER="20"
+            fi
+
+            # Install dependencies
+            if [[ -f "pnpm-lock.yaml" ]]; then
+              npm install -g pnpm
+              pnpm install --frozen-lockfile
+            elif [[ -f "yarn.lock" ]]; then
+              npm install -g yarn
+              yarn install --frozen-lockfile
+            elif [[ -f "bun.lockb" ]]; then
+              npm install -g bun
+              bun install --frozen-lockfile
+            else
+              npm ci || npm install
+            fi
+
+            # Build if there's a build script
+            if grep -q '"build"' package.json; then
+              npm run build 2>/dev/null || true
+            fi
+
+            # Detect port from package.json scripts
+            DETECTED_PORT=$(grep -oP '(?:PORT=|--port[= ]|--port |-p )(\d+)' package.json | grep -oP '\d+' | head -1) || true
+            [[ -n "$DETECTED_PORT" ]] && APP_PORT="$DETECTED_PORT"
+
+            # Start the app
+            if grep -q '"start"' package.json; then
+              PORT=$APP_PORT npm start &
+            elif grep -q '"dev"' package.json; then
+              PORT=$APP_PORT npm run dev &
+            elif grep -q '"preview"' package.json; then
+              PORT=$APP_PORT npm run preview &
+            fi
+
+          # Python project
+          elif [[ -f "requirements.txt" ]] || [[ -f "pyproject.toml" ]] || [[ -f "Pipfile" ]]; then
+            echo "Detected Python project"
+            pip install -r requirements.txt 2>/dev/null || pip install . 2>/dev/null || true
+
+            if [[ -f "manage.py" ]]; then
+              APP_PORT=8000
+              python manage.py runserver 0.0.0.0:$APP_PORT &
+            elif [[ -f "app.py" ]] || [[ -f "main.py" ]]; then
+              APP_PORT=5000
+              ENTRY=$(ls app.py main.py 2>/dev/null | head -1)
+              python "$ENTRY" &
+            fi
+
+          # Go project
+          elif [[ -f "go.mod" ]]; then
+            echo "Detected Go project"
+            go build -o app . 2>/dev/null && ./app &
+            APP_PORT=8080
+
+          # Docker project
+          elif [[ -f "Dockerfile" ]]; then
+            echo "Detected Docker project"
+            docker build -t webapp-ss-target . 2>/dev/null
+            docker run -d -p $APP_PORT:$APP_PORT webapp-ss-target
+          fi
+
+          # Wait for app to be ready
+          echo "Waiting for app on port $APP_PORT..."
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null -w "%{http_code}" "http://localhost:$APP_PORT" | grep -qE "^[23]"; then
+              echo "App is ready!"
+              break
+            fi
+            sleep 2
+          done
+
+          echo "app_port=$APP_PORT" >> "$GITHUB_OUTPUT"
+
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: "http://localhost:${{ steps.start-app.outputs.app_port }}"
+          artifact_name: zap-results
+          allow_issue_writing: false
+        continue-on-error: true
+
+  # ────────────────────────────────────────────
+  # Summary - Aggregate results
+  # ────────────────────────────────────────────
+  summary:
+    name: "Security Summary"
+    runs-on: ubuntu-latest
+    needs: [sast, secrets, sca]
+    if: always()
+    steps:
+      - name: Security scan summary
+        run: |
+          echo "## Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Scanner | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| SAST (Semgrep) | ${{ needs.sast.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Secrets (Gitleaks) | ${{ needs.secrets.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SCA (Trivy) | ${{ needs.sca.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View detailed results in the workflow artifacts." >> $GITHUB_STEP_SUMMARY

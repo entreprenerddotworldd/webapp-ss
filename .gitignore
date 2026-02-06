@@ -1,0 +1,7 @@
+webapp-ss-reports/
+*.pyc
+__pycache__/
+.env
+.env.*
+node_modules/
+dependency-check-report.*
