@@ -93,10 +93,42 @@ needs_live_server() {
 
 if needs_live_server && [[ -z "$APP_URL" ]]; then
     source "$SCRIPT_DIR/scripts/detect-port.sh"
+    DETECTED=""
+
     if [[ -n "$APP_PORT" ]]; then
         DETECTED=$(detect_port "$APP_PORT") || true
     else
-        DETECTED=$(detect_port) || true
+        # Check if multiple ports are listening
+        ALL_PORTS=$(detect_all_ports)
+        PORT_COUNT=$(echo "$ALL_PORTS" | grep -c . 2>/dev/null || echo 0)
+
+        if [[ "$PORT_COUNT" -gt 1 ]]; then
+            echo -e "${YELLOW}[!] Multiple dev servers detected:${NC}"
+            echo ""
+            i=1
+            while IFS= read -r port; do
+                # Try to identify what's running on each port
+                proc_name=$(ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'users:\(\("\K[^"]+' | head -1) || true
+                if [[ -n "$proc_name" ]]; then
+                    echo -e "    ${BOLD}${i})${NC} http://localhost:${port}  ${CYAN}(${proc_name})${NC}"
+                else
+                    echo -e "    ${BOLD}${i})${NC} http://localhost:${port}"
+                fi
+                i=$((i + 1))
+            done <<< "$ALL_PORTS"
+            echo ""
+            echo -en "${BOLD}[?] Which port should we scan? [1-${PORT_COUNT}]: ${NC}"
+            read -r choice
+
+            if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le "$PORT_COUNT" ]]; then
+                DETECTED=$(echo "$ALL_PORTS" | sed -n "${choice}p")
+            else
+                echo -e "${RED}[!] Invalid choice. Use -p PORT to specify explicitly.${NC}"
+                exit 1
+            fi
+        elif [[ "$PORT_COUNT" -eq 1 ]]; then
+            DETECTED="$ALL_PORTS"
+        fi
     fi
 
     if [[ -n "$DETECTED" ]]; then
