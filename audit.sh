@@ -166,6 +166,21 @@ if [[ "$SCAN_MODE" == "full" || "$SCAN_MODE" == "prod-check" ]]; then
 fi
 
 # ============================================================
+# FILTER RESULTS (remove noise and false positives)
+# ============================================================
+echo ""
+if command -v node &>/dev/null; then
+    # Find config file if it exists
+    CONFIG_FILE=""
+    if [[ -f "$PROJECT_DIR/webapp-ss.config.js" ]]; then
+        CONFIG_FILE="$PROJECT_DIR/webapp-ss.config.js"
+    fi
+
+    echo -e "${BOLD}[*] Filtering results (removing noise)...${NC}"
+    node "$SCRIPT_DIR/lib/filter-results.js" "$REPORT_DIR" "$CONFIG_FILE" 2>/dev/null || true
+fi
+
+# ============================================================
 # HTML REPORT
 # ============================================================
 echo ""
